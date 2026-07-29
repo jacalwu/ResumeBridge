@@ -44,17 +44,66 @@ ResumeBridge analyzes the match between a Job Description and a CV through three
 
 ---
 
-## Quick Start
+## Getting Started
+
+### Step 1 — Install Python 3.12
+
+ResumeBridge needs Python. Pick your platform below — you only need to do this once.
+
+**Windows**
+1. Download the installer: [python.org/downloads](https://www.python.org/downloads/) — click the yellow **Download Python 3.12** button
+2. Run the downloaded `.exe` file
+3. **IMPORTANT:** check the box **"Add Python to PATH"** at the bottom of the installer, then click **Install Now**
+4. Once done, restart your computer
+
+**macOS**
+1. Download the installer: [python.org/downloads](https://www.python.org/downloads/) — click the yellow **Download Python 3.12** button
+2. Open the downloaded `.pkg` file and follow the steps (click Continue → Continue → Install)
+3. Or if you have [Homebrew](https://brew.sh) installed, open Terminal and run:
+   ```
+   brew install python@3.12
+   ```
+
+**Linux (Ubuntu / Debian)**
+```
+sudo apt update && sudo apt install python3.12 python3.12-venv -y
+```
+
+### Step 2 — Get an API Key
+
+ResumeBridge connects to an AI provider. Pick one and sign up for a free API key:
+
+| Provider | Sign-up | Free tier |
+|----------|---------|-----------|
+| DeepSeek | [platform.deepseek.com](https://platform.deepseek.com) | Yes |
+| OpenAI | [platform.openai.com](https://platform.openai.com) | Requires credit |
+| Anthropic | [console.anthropic.com](https://console.anthropic.com) | Requires credit |
+| Qwen | [dashscope.aliyun.com](https://dashscope.aliyun.com) | Yes (100K tokens/day) |
+| GLM | [open.bigmodel.cn](https://open.bigmodel.cn) | Yes |
+| Kimi | [platform.moonshot.cn](https://platform.moonshot.cn) | Yes |
+
+### Step 3 — Launch the App
+
+Open **Terminal** (macOS/Linux) or **Command Prompt** (Windows), then:
 
 ```bash
-# macOS / Linux
+# Clone the project
+git clone https://github.com/jacalwu/ResumeBridge.git
+cd ResumeBridge/jd_cv_app
+
+# Run it
+# macOS / Linux:
 chmod +x run_app.sh && ./run_app.sh
 
-# Windows
+# Windows:
 run_app.bat
 ```
 
-The script creates a virtual environment, installs dependencies, and launches Streamlit at `http://localhost:8501`.
+The script sets up everything automatically. When you see a URL starting with `http://localhost:8501`, open it in your browser.
+
+**No terminal?** Alternatively, you can:
+1. Open the `jd_cv_app` folder in your file explorer
+2. Double-click `run_app.bat` (Windows) or `run_app.sh` (macOS/Linux)
 
 ### Manual Setup
 
