@@ -1,0 +1,13 @@
+# Encryption key — NEVER commit
+.data_key
+
+# Settings with API key — NEVER commit
+settings.ini
+
+# Local database with analysis history
+analysis_history.db
+
+# Python
+__pycache__/
+venv/
+*.pyc
