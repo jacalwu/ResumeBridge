@@ -8,6 +8,10 @@
 
 ---
 
+![Sample analysis output](assets/sample1.png)
+
+---
+
 ## Why I Built This
 
 Job hunting and hiring are exhausting. Candidates spend hours tailoring resumes. HR sifts through hundreds of CVs. Headhunters juggle both sides. AI can help — but most tools send your private data to the cloud without a second thought.
