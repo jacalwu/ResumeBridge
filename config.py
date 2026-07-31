@@ -8,7 +8,7 @@ Writes manual TOML — no extra dependencies needed.
 Cloud / shared deployment mode:
   Set environment variable RESUMEBRIDGE_DEPLOYMENT=cloud (or use
   Streamlit Cloud secrets) to activate cloud mode. In cloud mode,
-  the sidebar is hidden, the model is fixed to deepseek-v4-flask,
+  the sidebar is hidden, the model is fixed to deepseek-v4-flash,
   and no data is persisted.
 """
 
@@ -102,12 +102,12 @@ def get_cloud_config() -> dict:
       1. Environment variables (RESUMEBRIDGE_*)
       2. Streamlit secrets (st.secrets.resumebridge) — standard for Streamlit Cloud
 
-    Defaults: deepseek provider, deepseek-v4-flask model.
+    Defaults: deepseek provider, deepseek-v4-flash model.
 
     Example Streamlit Cloud secrets.toml:
         RESUMEBRIDGE_API_KEY = "sk-..."
         # RESUMEBRIDGE_PROVIDER = "deepseek"       # optional, this is the default
-        # RESUMEBRIDGE_MODEL = "deepseek-v4-flask" # optional, this is the default
+        # RESUMEBRIDGE_MODEL = "deepseek-v4-flash" # optional, this is the default
     """
     # Start with environment variables
     provider = os.getenv("RESUMEBRIDGE_PROVIDER", "")
@@ -129,12 +129,12 @@ def get_cloud_config() -> dict:
         if not api_key:
             api_key = secrets.get("api_key", "")
         if not model:
-            model = secrets.get("model", "deepseek-v4-flask")
+            model = secrets.get("model", "deepseek-v4-flash")
 
     # Apply hard defaults for anything still unset
     return {
         "provider": provider or "deepseek",
         "base_url": base_url or "https://api.deepseek.com/v1",
         "api_key": api_key,
-        "model": model or "deepseek-v4-flask",
+        "model": model or "deepseek-v4-flash",
     }

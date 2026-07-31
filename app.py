@@ -5,7 +5,7 @@ Includes encryption at rest, PII masking, and data retention controls.
 
 Supports two deployment modes:
   - Local:   Full sidebar config, history, persist to encrypted SQLite
-  - Cloud:   No sidebar, fixed model (deepseek-v4-flask), session-only results
+  - Cloud:   No sidebar, fixed model (deepseek-v4-flash), session-only results
              Activate via env var RESUMEBRIDGE_DEPLOYMENT=cloud or
              STREAMLIT_SHARING_MODE=streamlit
 """
@@ -242,7 +242,7 @@ def _build_client() -> LLMClient | None:
         provider=st.session_state.get("llm_provider", "deepseek" if IS_CLOUD else "openai"),
         base_url=st.session_state.get("llm_base_url", ""),
         api_key=key,
-        model=st.session_state.get("llm_model", "deepseek-v4-flask" if IS_CLOUD else "gpt-4o"),
+        model=st.session_state.get("llm_model", "deepseek-v4-flash" if IS_CLOUD else "gpt-4o"),
     )
 
 
