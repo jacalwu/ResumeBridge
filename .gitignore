@@ -3,6 +3,8 @@
 
 # Settings with API key — NEVER commit
 settings.ini
+.streamlit/settings.toml
+.streamlit/secrets.toml
 
 # Local database with analysis history
 analysis_history.db

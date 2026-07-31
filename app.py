@@ -2,6 +2,12 @@
 JD/CV Analysis App — Streamlit UI
 Multi-role (Candidate / HR / HeadHunter) with LLM-powered analysis.
 Includes encryption at rest, PII masking, and data retention controls.
+
+Supports two deployment modes:
+  - Local:   Full sidebar config, history, persist to encrypted SQLite
+  - Cloud:   No sidebar, fixed model (deepseek-v4-flask), session-only results
+             Activate via env var RESUMEBRIDGE_DEPLOYMENT=cloud or
+             STREAMLIT_SHARING_MODE=streamlit
 """
 
 import os
@@ -9,7 +15,12 @@ import tempfile
 
 import streamlit as st
 
-from config import get_llm_settings, set_llm_settings
+from config import (
+    get_llm_settings,
+    set_llm_settings,
+    is_cloud_deployment,
+    get_cloud_config,
+)
 from llm_client import LLMClient, LLMClientError, PROVIDER_DEFAULTS, VALID_PROVIDERS
 from db import init_db, save_analysis, load_history, delete_record, purge_old_records
 from privacy import (
@@ -23,6 +34,12 @@ from utils.reader import read_file
 from analyzer import analyze_candidate, analyze_hr, analyze_headhunter
 
 # ---------------------------------------------------------------------------
+# Detect deployment mode — MUST happen before any st.* call
+# ---------------------------------------------------------------------------
+
+IS_CLOUD = is_cloud_deployment()
+
+# ---------------------------------------------------------------------------
 # Page config
 # ---------------------------------------------------------------------------
 
@@ -30,131 +47,170 @@ st.set_page_config(
     page_title="JD/CV Analysis Tool",
     page_icon="📋",
     layout="wide",
+    initial_sidebar_state="collapsed" if IS_CLOUD else "auto",
 )
 
 # ---------------------------------------------------------------------------
-# Session defaults — privacy
+# Session defaults — privacy & LLM settings
 # ---------------------------------------------------------------------------
 
 if "privacy_initialized" not in st.session_state:
-    st.session_state["pii_mask_enabled"] = True
-    st.session_state["retention_days"] = 30
-    st.session_state["store_history"] = True
+    if IS_CLOUD:
+        # Cloud mode: PII masking ON, history OFF (session-only results)
+        st.session_state["pii_mask_enabled"] = True
+        st.session_state["retention_days"] = 30
+        st.session_state["store_history"] = False
+    else:
+        # Local mode: defaults with history enabled
+        st.session_state["pii_mask_enabled"] = True
+        st.session_state["retention_days"] = 30
+        st.session_state["store_history"] = True
     st.session_state["privacy_initialized"] = True
 
 # ---------------------------------------------------------------------------
-# Sidebar — LLM settings
+# LLM config initialization
 # ---------------------------------------------------------------------------
 
-st.sidebar.title("⚙️ LLM Settings")
+if IS_CLOUD:
+    # Cloud mode: read config from environment / Streamlit secrets
+    if "llm_loaded" not in st.session_state:
+        cloud_cfg = get_cloud_config()
+        st.session_state["llm_provider"] = cloud_cfg["provider"]
+        st.session_state["llm_base_url"] = cloud_cfg["base_url"]
+        st.session_state["llm_model"] = cloud_cfg["model"]
+        st.session_state["_saved_api_key"] = cloud_cfg["api_key"]
+        st.session_state["llm_api_key"] = ""
+        st.session_state["llm_loaded"] = True
+else:
+    # Local mode: full sidebar with config UI
+    # -----------------------------------------------------------------------
+    # Sidebar — LLM settings
+    # -----------------------------------------------------------------------
 
-# Load saved settings on first run
-if "llm_loaded" not in st.session_state:
-    saved = get_llm_settings()
-    st.session_state["llm_provider"] = saved["provider"]
-    st.session_state["llm_base_url"] = saved["base_url"]
-    st.session_state["llm_api_key"] = saved["api_key"]
-    st.session_state["llm_model"] = saved["model"]
-    st.session_state["llm_loaded"] = True
+    st.sidebar.title("⚙️ LLM Settings")
 
-# Auto-switch defaults when provider changes
-prev_provider = st.session_state.get("_prev_provider", "")
-current_provider = st.session_state["llm_provider"]
-if current_provider != prev_provider:
-    defaults = PROVIDER_DEFAULTS.get(current_provider, {})
-    if defaults.get("base_url"):
-        st.session_state["llm_base_url"] = defaults["base_url"]
-    if defaults.get("model"):
-        st.session_state["llm_model"] = defaults["model"]
-    st.session_state["_prev_provider"] = current_provider
-
-PROVIDER_LABELS = {
-    "openai": "OpenAI",
-    "anthropic": "Anthropic",
-    "deepseek": "DeepSeek",
-    "qwen": "Qwen (Tongyi)",
-    "glm": "GLM (Zhipu)",
-    "kimi": "Kimi (Moonshot)",
-}
-
-default_idx = VALID_PROVIDERS.index(current_provider) if current_provider in VALID_PROVIDERS else 0
-st.sidebar.selectbox(
-    "Provider",
-    VALID_PROVIDERS,
-    index=default_idx,
-    format_func=lambda x: PROVIDER_LABELS.get(x, x),
-    key="llm_provider",
-)
-
-st.sidebar.text_input("Base URL", key="llm_base_url")
-
-st.sidebar.text_input("API Key", type="password", key="llm_api_key")
-
-st.sidebar.text_input("Model", key="llm_model")
-
-# Save / Load buttons
-col_save1, col_save2 = st.sidebar.columns([1, 1])
-with col_save1:
-    if st.button("💾 Save Settings", use_container_width=True):
-        set_llm_settings(
-            provider=st.session_state["llm_provider"],
-            base_url=st.session_state["llm_base_url"],
-            api_key=st.session_state["llm_api_key"],
-            model=st.session_state["llm_model"],
-        )
-        st.sidebar.success("Saved (API key encrypted)")
-with col_save2:
-    if st.button("📂 Load Settings", use_container_width=True):
+    # Load saved settings on first run (API key is kept hidden — never shown)
+    if "llm_loaded" not in st.session_state:
         saved = get_llm_settings()
         st.session_state["llm_provider"] = saved["provider"]
         st.session_state["llm_base_url"] = saved["base_url"]
-        st.session_state["llm_api_key"] = saved["api_key"]
         st.session_state["llm_model"] = saved["model"]
-        st.sidebar.info("Loaded from settings.ini")
-        st.rerun()
+        # Store key privately — the visible field stays empty
+        st.session_state["_saved_api_key"] = saved["api_key"]
+        st.session_state["llm_api_key"] = ""
+        st.session_state["llm_loaded"] = True
 
-# ---------------------------------------------------------------------------
-# Sidebar — Privacy & data protection
-# ---------------------------------------------------------------------------
+    # Auto-switch defaults when provider changes
+    prev_provider = st.session_state.get("_prev_provider", "")
+    current_provider = st.session_state["llm_provider"]
+    if current_provider != prev_provider:
+        defaults = PROVIDER_DEFAULTS.get(current_provider, {})
+        if defaults.get("base_url"):
+            st.session_state["llm_base_url"] = defaults["base_url"]
+        if defaults.get("model"):
+            st.session_state["llm_model"] = defaults["model"]
+        st.session_state["_prev_provider"] = current_provider
 
-st.sidebar.divider()
-st.sidebar.title("🔒 Privacy & Data Protection")
+    PROVIDER_LABELS = {
+        "openai": "OpenAI",
+        "anthropic": "Anthropic",
+        "deepseek": "DeepSeek",
+        "qwen": "Qwen (Tongyi)",
+        "glm": "GLM (Zhipu)",
+        "kimi": "Kimi (Moonshot)",
+    }
 
-st.sidebar.checkbox(
-    "Mask PII before sending to LLM",
-    value=True,
-    key="pii_mask_enabled",
-    help=(
-        "Detects and masks names, emails, phone numbers, addresses, and ID numbers "
-        "in the JD/CV text before sending to the LLM API. The LLM never sees the "
-        "original personal identifiers. Recommended: ON."
-    ),
-)
+    default_idx = VALID_PROVIDERS.index(current_provider) if current_provider in VALID_PROVIDERS else 0
+    st.sidebar.selectbox(
+        "Provider",
+        VALID_PROVIDERS,
+        index=default_idx,
+        format_func=lambda x: PROVIDER_LABELS.get(x, x),
+        key="llm_provider",
+    )
 
-st.sidebar.checkbox(
-    "Store analysis in local history",
-    value=True,
-    key="store_history",
-    help=(
-        "When enabled, analysis results are saved to the local encrypted SQLite "
-        "database for later review. When disabled, results are shown but never "
-        "written to disk. Recommended: OFF for highly sensitive CVs."
-    ),
-)
+    st.sidebar.text_input("Base URL", key="llm_base_url")
 
-retention = st.sidebar.number_input(
-    "Auto-delete records older than (days)",
-    min_value=1,
-    max_value=365,
-    value=30,
-    key="retention_days",
-    help="Records older than this are purged on app startup. Set lower for tighter security.",
-)
+    st.sidebar.text_input("API Key", type="password", key="llm_api_key", placeholder="Enter new key to replace")
 
-st.sidebar.caption(
-    "📁 All stored data is encrypted at rest (Fernet). "
-    "The encryption key is in `.data_key` — keep this file safe."
-)
+    # Show key status
+    if st.session_state.get("_saved_api_key", ""):
+        st.sidebar.caption("🔑 API key saved — enter a new one only to change it.")
+    else:
+        st.sidebar.caption("⚠️ No API key saved — enter one above.")
+
+    st.sidebar.text_input("Model", key="llm_model")
+
+    # Save / Load buttons
+    col_save1, col_save2 = st.sidebar.columns([1, 1])
+    with col_save1:
+        if st.button("💾 Save Settings", use_container_width=True):
+            visible_key = st.session_state.get("llm_api_key", "").strip()
+            # Only overwrite saved key if user actually typed something
+            key_to_save = visible_key if visible_key else st.session_state.get("_saved_api_key", "")
+            set_llm_settings(
+                provider=st.session_state["llm_provider"],
+                base_url=st.session_state["llm_base_url"],
+                api_key=key_to_save,
+                model=st.session_state["llm_model"],
+            )
+            if visible_key:
+                st.session_state["_saved_api_key"] = key_to_save
+                st.session_state["llm_api_key"] = ""  # clear visible field after save
+            st.sidebar.success("Saved (API key encrypted)")
+    with col_save2:
+        if st.button("📂 Load Settings", use_container_width=True):
+            saved = get_llm_settings()
+            st.session_state["llm_provider"] = saved["provider"]
+            st.session_state["llm_base_url"] = saved["base_url"]
+            st.session_state["_saved_api_key"] = saved["api_key"]
+            st.session_state["llm_api_key"] = ""  # never show the loaded key
+            st.session_state["llm_model"] = saved["model"]
+            st.sidebar.info("Loaded from settings.toml")
+            st.rerun()
+
+    # -----------------------------------------------------------------------
+    # Sidebar — Privacy & data protection
+    # -----------------------------------------------------------------------
+
+    st.sidebar.divider()
+    st.sidebar.title("🔒 Privacy & Data Protection")
+
+    st.sidebar.checkbox(
+        "Mask PII before sending to LLM",
+        value=True,
+        key="pii_mask_enabled",
+        help=(
+            "Detects and masks names, emails, phone numbers, addresses, and ID numbers "
+            "in the JD/CV text before sending to the LLM API. The LLM never sees the "
+            "original personal identifiers. Recommended: ON."
+        ),
+    )
+
+    st.sidebar.checkbox(
+        "Store analysis in local history",
+        value=True,
+        key="store_history",
+        help=(
+            "When enabled, analysis results are saved to the local encrypted SQLite "
+            "database for later review. When disabled, results are shown but never "
+            "written to disk. Recommended: OFF for highly sensitive CVs."
+        ),
+    )
+
+    retention = st.sidebar.number_input(
+        "Auto-delete records older than (days)",
+        min_value=1,
+        max_value=365,
+        value=30,
+        key="retention_days",
+        help="Records older than this are purged on app startup. Set lower for tighter security.",
+    )
+
+    st.sidebar.caption(
+        "📁 All stored data is encrypted at rest (Fernet). "
+        "The encryption key is in `.data_key` — keep this file safe."
+    )
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -163,15 +219,30 @@ st.sidebar.caption(
 
 def _build_client() -> LLMClient | None:
     """Build an LLMClient from session_state settings, or return None if incomplete."""
-    key = st.session_state.get("llm_api_key", "").strip()
+    if IS_CLOUD:
+        # Cloud mode: use saved key from env/secrets (no visible field)
+        key = st.session_state.get("_saved_api_key", "").strip()
+    else:
+        # Local mode: use visible key if entered, otherwise fall back to saved key
+        visible = st.session_state.get("llm_api_key", "").strip()
+        saved = st.session_state.get("_saved_api_key", "").strip()
+        key = visible if visible else saved
+
     if not key:
-        st.warning("Please enter your API Key in the sidebar")
+        if IS_CLOUD:
+            st.warning(
+                "⚠️ API key not configured. Set the `RESUMEBRIDGE_API_KEY` "
+                "environment variable or add it to Streamlit Cloud secrets."
+            )
+        else:
+            st.warning("Please enter your API Key in the sidebar")
         return None
+
     return LLMClient(
-        provider=st.session_state.get("llm_provider", "openai"),
+        provider=st.session_state.get("llm_provider", "deepseek" if IS_CLOUD else "openai"),
         base_url=st.session_state.get("llm_base_url", ""),
         api_key=key,
-        model=st.session_state.get("llm_model", "gpt-4o"),
+        model=st.session_state.get("llm_model", "deepseek-v4-flask" if IS_CLOUD else "gpt-4o"),
     )
 
 
@@ -196,19 +267,25 @@ def _run_analysis(role: str, jd_text: str, cv_text: str, mode: str | None = None
 
 
 # ---------------------------------------------------------------------------
-# Initialize DB & run retention purge
+# Initialize DB & run retention purge (local mode only)
 # ---------------------------------------------------------------------------
 
-init_db()
-purged = purge_old_records(st.session_state.get("retention_days", 30))
-if purged:
-    st.toast(f"🧹 Auto-purged {purged} old record(s) (>{st.session_state['retention_days']} days)", icon="🧹")
+if not IS_CLOUD:
+    init_db()
+    purged = purge_old_records(st.session_state.get("retention_days", 30))
+    if purged:
+        st.toast(f"🧹 Auto-purged {purged} old record(s) (>{st.session_state['retention_days']} days)", icon="🧹")
 
 # ---------------------------------------------------------------------------
-# Tabs
+# Tabs — conditional on deployment mode
 # ---------------------------------------------------------------------------
 
-tab_analysis, tab_history = st.tabs(["📊 Analysis", "📚 History"])
+if IS_CLOUD:
+    # Cloud mode: only the Analysis tab (no history persistence)
+    tab_analysis = st.tabs(["📊 Analysis"])[0]
+else:
+    # Local mode: Analysis + History tabs
+    tab_analysis, tab_history = st.tabs(["📊 Analysis", "📚 History"])
 
 # ===========================================================================
 # TAB 1: Analysis
@@ -217,21 +294,42 @@ tab_analysis, tab_history = st.tabs(["📊 Analysis", "📚 History"])
 with tab_analysis:
     st.title("📋 JD / CV Analysis Tool")
 
-    # --- Privacy notice ---
-    with st.expander("🔒 Privacy Notice — Please Read", expanded=True):
-        st.markdown(
-            """
-            ⚠️ **Data handling summary:**
-            - Uploaded files are written to a **temporary file** and deleted immediately after text extraction.
-            - If **Mask PII** is enabled (sidebar), personal identifiers are replaced with placeholders
-              before sending to the LLM API.
-            - If **Store history** is enabled, results are **encrypted** before writing to the local SQLite database.
-            - Your API key is **encrypted** in `settings.ini`.
-            - **Data sent to the LLM provider** (OpenAI / Anthropic) is subject to their privacy policy.
-              Do NOT upload highly sensitive data unless you trust the provider.
-            - For maximum privacy: disable history storage and enable PII masking.
-            """
+    # Cloud mode badge
+    if IS_CLOUD:
+        st.caption(
+            "☁️ **Cloud Demo** — Results are shown in this session only. "
+            "Data is never stored on disk. Close this page to erase everything."
         )
+
+    # --- Privacy notice ---
+    with st.expander("🔒 Privacy Notice — Please Read", expanded=not IS_CLOUD):
+        if IS_CLOUD:
+            st.markdown(
+                """
+                ⚠️ **Data handling summary (Cloud Demo):**
+                - Uploaded files are written to a **temporary file** and deleted immediately after text extraction.
+                - **PII Masking is ON** — personal identifiers are replaced with placeholders
+                  before sending to the LLM API (DeepSeek).
+                - **No history is stored** — results exist only in this browser session.
+                  Closing the page immediately clears all data.
+                - The LLM provider (DeepSeek) may process data under their own privacy policy.
+                - For maximum privacy: do NOT disable PII masking.
+                """
+            )
+        else:
+            st.markdown(
+                """
+                ⚠️ **Data handling summary:**
+                - Uploaded files are written to a **temporary file** and deleted immediately after text extraction.
+                - If **Mask PII** is enabled (sidebar), personal identifiers are replaced with placeholders
+                  before sending to the LLM API.
+                - If **Store history** is enabled, results are **encrypted** before writing to the local SQLite database.
+                - Your API key is **encrypted** in `settings.toml`.
+                - **Data sent to the LLM provider** (OpenAI / Anthropic) is subject to their privacy policy.
+                  Do NOT upload highly sensitive data unless you trust the provider.
+                - For maximum privacy: disable history storage and enable PII masking.
+                """
+            )
 
     # --- Role selector ---
     role = st.selectbox(
@@ -378,7 +476,7 @@ with tab_analysis:
                 store = st.session_state.get("store_history", True)
                 result = _run_analysis(role, jd_text, cv_text, hh_mode)
 
-                if store:
+                if store and not IS_CLOUD:
                     save_analysis(
                         role=role,
                         jd_text=jd_text,
@@ -387,6 +485,9 @@ with tab_analysis:
                         mode=hh_mode if role == "HeadHunter" else None,
                     )
                     st.success("✅ Analysis complete — encrypted & saved to local history")
+                elif IS_CLOUD:
+                    st.success("✅ Analysis complete — session only (not persisted)")
+                    st.caption("💡 Close this page to erase all data from this session.")
                 else:
                     st.success("✅ Analysis complete — NOT saved (history disabled)")
                     st.caption("💡 Results are shown below but not written to disk.")
@@ -400,70 +501,71 @@ with tab_analysis:
                 st.error(f"❌ Error: {e}")
 
 # ===========================================================================
-# TAB 2: History
+# TAB 2: History (local mode only)
 # ===========================================================================
 
-with tab_history:
-    st.title("📚 Analysis History")
+if not IS_CLOUD:
+    with tab_history:
+        st.title("📚 Analysis History")
 
-    if not st.session_state.get("store_history", True):
-        st.warning(
-            "⚠️ History storage is currently **disabled** in the sidebar privacy settings. "
-            "Enable it to save future analyses."
-        )
+        if not st.session_state.get("store_history", True):
+            st.warning(
+                "⚠️ History storage is currently **disabled** in the sidebar privacy settings. "
+                "Enable it to save future analyses."
+            )
 
-    if st.button("🔄 Refresh"):
-        st.rerun()
-
-    records = load_history(limit=50)
-
-    if not records:
-        st.info("No analysis history yet. Run an analysis first.")
-    else:
-        for rec in records:
-            role_label = rec["role"]
-            mode_label = f" ({rec['mode']})" if rec.get("mode") else ""
-            ts = rec["created_at"][:19].replace("T", " ")
-            label = f"#{rec['id']} | {role_label}{mode_label} | {ts}"
-
-            with st.expander(label):
-                col_a, col_b = st.columns([5, 1])
-                with col_a:
-                    st.markdown(f"**Role:** {role_label}{mode_label}")
-                    st.markdown(f"**Time:** {rec['created_at']}")
-
-                    with st.expander("📄 JD Content"):
-                        st.text_area(
-                            "JD",
-                            rec["jd_text"],
-                            height=150,
-                            disabled=True,
-                            label_visibility="collapsed",
-                            key=f"jd_hist_{rec['id']}",
-                        )
-
-                    with st.expander("📄 CV Content"):
-                        st.text_area(
-                            "CV",
-                            rec["cv_text"],
-                            height=150,
-                            disabled=True,
-                            label_visibility="collapsed",
-                            key=f"cv_hist_{rec['id']}",
-                        )
-
-                    st.markdown("### Analysis Result")
-                    st.markdown(rec["result"])
-                with col_b:
-                    if st.button("🗑️ Delete", key=f"del_{rec['id']}"):
-                        delete_record(rec["id"])
-                        st.toast("Record deleted", icon="🗑️")
-                        st.rerun()
-
-    # Bulk clear
-    if len(records) > 1:
-        if st.button("🗑️ Clear All History", type="secondary"):
-            for rec in records:
-                delete_record(rec["id"])
-            st.toast("All records deleted", icon="🗑️")
+        if st.button("🔄 Refresh"):
             st.rerun()
+
+        records = load_history(limit=50)
+
+        if not records:
+            st.info("No analysis history yet. Run an analysis first.")
+        else:
+            for rec in records:
+                role_label = rec["role"]
+                mode_label = f" ({rec['mode']})" if rec.get("mode") else ""
+                ts = rec["created_at"][:19].replace("T", " ")
+                label = f"#{rec['id']} | {role_label}{mode_label} | {ts}"
+
+                with st.expander(label):
+                    col_a, col_b = st.columns([5, 1])
+                    with col_a:
+                        st.markdown(f"**Role:** {role_label}{mode_label}")
+                        st.markdown(f"**Time:** {rec['created_at']}")
+
+                        with st.expander("📄 JD Content"):
+                            st.text_area(
+                                "JD",
+                                rec["jd_text"],
+                                height=150,
+                                disabled=True,
+                                label_visibility="collapsed",
+                                key=f"jd_hist_{rec['id']}",
+                            )
+
+                        with st.expander("📄 CV Content"):
+                            st.text_area(
+                                "CV",
+                                rec["cv_text"],
+                                height=150,
+                                disabled=True,
+                                label_visibility="collapsed",
+                                key=f"cv_hist_{rec['id']}",
+                            )
+
+                        st.markdown("### Analysis Result")
+                        st.markdown(rec["result"])
+                    with col_b:
+                        if st.button("🗑️ Delete", key=f"del_{rec['id']}"):
+                            delete_record(rec["id"])
+                            st.toast("Record deleted", icon="🗑️")
+                            st.rerun()
+
+        # Bulk clear
+        if len(records) > 1:
+            if st.button("🗑️ Clear All History", type="secondary"):
+                for rec in records:
+                    delete_record(rec["id"])
+                st.toast("All records deleted", icon="🗑️")
+                st.rerun()
