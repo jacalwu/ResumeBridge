@@ -1,6 +1,51 @@
 """
 Prompt templates for each role and mode.
+Includes personality presets for feedback style adjustment.
 """
+
+# =============================================================================
+# Personality Presets — feedback style modifiers
+# =============================================================================
+
+PERSONALITY_PRESETS = {
+    "balanced": {
+        "label": "中肯 (Balanced)",
+        "description": "公平客觀，優缺點並重",
+        "system_modifier": (
+            "Provide balanced, fair feedback. Acknowledge both strengths and weaknesses "
+            "with equal weight. Be constructive and encouraging while still being honest. "
+            "Highlight what the candidate does well alongside areas for improvement."
+        ),
+    },
+    "strict": {
+        "label": "嚴格 (Strict)",
+        "description": "嚴格審視，聚焦差距與不足",
+        "system_modifier": (
+            "Be strict and critical in your analysis. Focus on gaps, weaknesses, and areas "
+            "for improvement. Do not sugarcoat — point out every deficiency and mismatch clearly. "
+            "Hold the candidate to a high standard. Prioritize identifying risks over highlighting strengths."
+        ),
+    },
+}
+
+DEFAULT_PERSONALITY = "balanced"
+
+
+def get_personality_modifier(personality: str) -> str:
+    """Return the system prompt modifier for the given personality key.
+    Returns empty string if personality is not recognized."""
+    preset = PERSONALITY_PRESETS.get(personality)
+    if preset:
+        return preset["system_modifier"]
+    return ""
+
+
+def get_personality_label(personality: str) -> str:
+    """Return the display label for a personality key."""
+    preset = PERSONALITY_PRESETS.get(personality)
+    if preset:
+        return preset["label"]
+    return personality
 
 # =============================================================================
 # CANDIDATE
@@ -36,6 +81,13 @@ Present as a table with columns: JD Requirement | Match Level (Strong / Partial 
 
 ### 4. Interview Preparation Questions (with answer strategies)
 Provide 6–8 questions likely to be asked in an interview, each with a brief answer strategy (2–3 sentences)
+
+### 5. Gap Learning Resources
+For each **Gap** identified in the match table above:
+- Explain **why this skill matters** for the role (1–2 sentences)
+- Suggest **specific learning topics** the candidate should search for (e.g., "Docker containerization for beginners", "AWS Solutions Architect crash course")
+- Recommend 1–2 **types of resources** to look for (e.g., online course, official documentation, book, certification)
+Do NOT invent URLs — just provide the concrete search terms and resource types.
 """
 
 
@@ -77,6 +129,13 @@ Design 8–12 interview questions covering:
 - Soft skills and culture fit
 - Gap confirmation
 Label each question with its **purpose**
+
+### 4. Gap Development Resources
+For each **Gap** identified in the per-requirement match:
+- Explain **why this skill matters** for the role (1–2 sentences)
+- Suggest **specific learning topics** the candidate should explore (e.g., "React state management with Redux", "Financial modeling in Excel")
+- Recommend 1–2 **types of resources** (e.g., online course, certification, official docs, book)
+Do NOT invent URLs — just provide the concrete search terms and resource types.
 """
 
 
@@ -113,6 +172,13 @@ Design 10–15 questions for an in-depth conversation with the candidate. Cover:
 - Soft skills and team collaboration
 - Salary and condition expectations
 Label each question with its **purpose**
+
+### 3. Candidate Development Resources
+For each **gap or risk area** identified in the match overview:
+- Explain **why this area matters** for the client's role (1–2 sentences)
+- Suggest **specific learning topics** the candidate could pursue (e.g., "Kubernetes deployment patterns", "B2B sales negotiation techniques")
+- Recommend 1–2 **types of resources** (e.g., online course, certification, workshop, book)
+Do NOT invent URLs — just provide the concrete search terms and resource types.
 """
 
 
@@ -158,6 +224,13 @@ Body to include:
 - 3 core reasons for the recommendation
 - 2–3 areas to confirm in an interview
 - Closing and next steps
+
+### 5. Candidate Development Suggestions
+For each **risk/consideration** identified in section 3:
+- Explain **why this area is important** to develop (1–2 sentences)
+- Suggest **specific learning topics** to bridge the gap (e.g., "Agile project management certification", "Python data analysis with pandas")
+- Recommend 1–2 **types of resources** (e.g., online course, certification, mentorship, book)
+Do NOT invent URLs — just provide the concrete search terms and resource types.
 """
 
 

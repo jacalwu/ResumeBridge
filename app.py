@@ -31,6 +31,12 @@ from privacy import (
     write_temp_file,
 )
 from utils.reader import read_file
+from utils.prompts import (
+    PERSONALITY_PRESETS,
+    DEFAULT_PERSONALITY,
+    get_personality_modifier,
+)
+from utils.search import search_resources, is_search_available
 from analyzer import analyze_candidate, analyze_hr, analyze_headhunter
 
 # ---------------------------------------------------------------------------
@@ -66,6 +72,12 @@ if "privacy_initialized" not in st.session_state:
         st.session_state["retention_days"] = 30
         st.session_state["store_history"] = True
     st.session_state["privacy_initialized"] = True
+
+# Personality / feedback style initialization
+if "personality_initialized" not in st.session_state:
+    st.session_state["personality"] = DEFAULT_PERSONALITY
+    st.session_state["personality_custom_prompt"] = get_personality_modifier(DEFAULT_PERSONALITY)
+    st.session_state["personality_initialized"] = True
 
 # ---------------------------------------------------------------------------
 # LLM config initialization
@@ -257,13 +269,119 @@ def _run_analysis(role: str, jd_text: str, cv_text: str, mode: str | None = None
         jd_text = st.session_state.get("jd_masked", jd_text)
         cv_text = st.session_state.get("cv_masked", cv_text)
 
+    # Personality modifier
+    personality_modifier = st.session_state.get("personality_custom_prompt", "")
+
     with st.spinner(f"🤖 Analyzing as {role}, please wait…"):
         if role == "Candidate":
-            return analyze_candidate(client, jd_text, cv_text)
+            return analyze_candidate(client, jd_text, cv_text, personality_modifier)
         elif role == "HR":
-            return analyze_hr(client, jd_text, cv_text)
+            return analyze_hr(client, jd_text, cv_text, personality_modifier)
         else:  # HeadHunter
-            return analyze_headhunter(client, jd_text, cv_text, mode)
+            return analyze_headhunter(client, jd_text, cv_text, mode, personality_modifier)
+
+
+def _extract_gaps(result: str) -> list[str]:
+    """
+    Extract gap skill/topic names from the LLM analysis result.
+
+    Looks for:
+      - Table rows where Match Level is 'Gap' (Candidate/HR output)
+      - Bullet points under gaps/risks sections (HeadHunter output)
+      - Named gaps in the Gap Learning Resources section
+
+    Returns deduplicated list of clean gap skill names (max 8).
+    """
+    import re
+
+    gaps: list[str] = []
+
+    # Pattern 1: Table rows with "Gap" match level
+    # Matches: "| Some Skill | Gap | ..." or "| Some Skill | **Gap** | ..."
+    for m in re.finditer(
+        r"\|\s*(.+?)\s*\|\s*(?:\*\*)?Gap(?:\*\*)?\s*\|",
+        result,
+        re.IGNORECASE,
+    ):
+        skill = m.group(1).strip().lstrip("|").strip()
+        if skill and len(skill) > 2:
+            gaps.append(skill)
+
+    # Pattern 2: Named gaps in the Gap Resources / Development sections
+    # Looks for "**Skill Name**" or "- **Skill Name**:" patterns
+    for m in re.finditer(
+        r"(?:^|\n)\s*[-*]*\s*\*\*(.+?)\*\*\s*[:：\-—]",
+        result,
+    ):
+        skill = m.group(1).strip()
+        # Filter out non-skill entries
+        if skill and len(skill) > 2 and len(skill) < 80:
+            skip_words = [
+                "search", "resource type", "gap", "why it matters",
+                "recommend", "suggest", "note", "example", "tip",
+            ]
+            if not any(w in skill.lower() for w in skip_words):
+                gaps.append(skill)
+
+    # Pattern 3: Bullet points under gap/risk overview sections (HeadHunter)
+    in_gap_section = False
+    for line in result.split("\n"):
+        stripped = line.strip()
+        # Detect section headers
+        if re.match(r"^#{1,4}\s+", stripped):
+            header_lower = stripped.lower()
+            in_gap_section = any(
+                kw in header_lower
+                for kw in ["gap", "risk", "consideration"]
+            ) and "resource" not in header_lower and "development" not in header_lower
+            continue
+
+        if in_gap_section and re.match(r"^[-*]\s+\*\*(.+?)\*\*", stripped):
+            item = re.match(r"^[-*]\s+\*\*(.+?)\*\*", stripped).group(1)
+            item = item[:80].strip()
+            if item and len(item) > 3:
+                gaps.append(item)
+
+    # Deduplicate and clean
+    seen: set[str] = set()
+    unique: list[str] = []
+    for g in gaps:
+        # Clean: remove markdown links, extra whitespace
+        g = re.sub(r"\[(.+?)\]\(.+?\)", r"\1", g)
+        g = g.strip()
+        key = g.lower()
+        if key not in seen and len(g) >= 3:
+            seen.add(key)
+            unique.append(g)
+        if len(unique) >= 8:
+            break
+
+    return unique
+
+
+def _search_gap_resources(gaps: list[str]) -> dict[str, list[dict]]:
+    """
+    Search for learning resources for each gap.
+
+    Returns {gap_name: [resource_dicts]}.
+    Results are cached in session state to avoid re-searching on rerun.
+    """
+    cache_key = "_gap_search_cache"
+    if cache_key not in st.session_state:
+        st.session_state[cache_key] = {}
+
+    cache = st.session_state[cache_key]
+    results: dict[str, list[dict]] = {}
+
+    for gap in gaps:
+        if gap in cache:
+            results[gap] = cache[gap]
+        else:
+            resources = search_resources(gap, max_results=4)
+            cache[gap] = resources
+            results[gap] = resources
+
+    return results
 
 
 # ---------------------------------------------------------------------------
@@ -296,6 +414,11 @@ with tab_analysis:
 
     # Cloud mode badge
     if IS_CLOUD:
+        github_url = os.getenv("RESUMEBRIDGE_GITHUB_URL", "")
+        if github_url:
+            st.markdown(
+                f"🔗 [View Source on GitHub]({github_url})"
+            )
         st.caption(
             "☁️ **Cloud Demo** — Results are shown in this session only. "
             "Data is never stored on disk. Close this page to erase everything."
@@ -353,6 +476,55 @@ with tab_analysis:
                 "HR": "🏢 HR mode — Recommendation, highlights, risks, and referral letter",
             }[m],
             horizontal=True,
+        )
+
+    # --- Personality / Feedback Style selector ---
+    st.markdown("---")
+    st.subheader("🎯 Feedback Style")
+
+    personality_keys = list(PERSONALITY_PRESETS.keys())
+    current_idx = personality_keys.index(
+        st.session_state.get("personality", DEFAULT_PERSONALITY)
+    ) if st.session_state.get("personality", DEFAULT_PERSONALITY) in personality_keys else 0
+
+    selected_personality = st.selectbox(
+        "Select feedback personality",
+        personality_keys,
+        index=current_idx,
+        format_func=lambda k: PERSONALITY_PRESETS[k]["label"],
+        help="Choose the tone and focus of the CV feedback analysis.",
+        key="personality",
+    )
+
+    # Update the custom prompt when personality changes
+    if selected_personality != st.session_state.get("_prev_personality", ""):
+        st.session_state["personality_custom_prompt"] = get_personality_modifier(selected_personality)
+        st.session_state["_prev_personality"] = selected_personality
+
+    if IS_CLOUD:
+        # Cloud mode: show prompt but don't allow editing
+        st.caption(f"**{PERSONALITY_PRESETS[selected_personality]['description']}**")
+        st.text_area(
+            "System prompt modifier (read-only in cloud demo)",
+            value=st.session_state.get("personality_custom_prompt", ""),
+            height=120,
+            disabled=True,
+            key="personality_prompt_display",
+            help="This prompt modifier is appended to the system prompt. Edit it in the local deployment version.",
+        )
+    else:
+        # Local mode: allow full prompt editing
+        st.caption(f"**{PERSONALITY_PRESETS[selected_personality]['description']}**")
+        st.text_area(
+            "System prompt modifier (editable)",
+            value=st.session_state.get("personality_custom_prompt", ""),
+            height=120,
+            key="personality_custom_prompt",
+            help="Edit this prompt to customize the feedback style. It is appended to the system prompt sent to the LLM.",
+        )
+        st.caption(
+            "💡 **Tip:** Customize the prompt above to fine-tune how the AI evaluates CVs. "
+            "Reset by switching to the other personality and back."
         )
 
     # --- File upload ---
@@ -494,6 +666,38 @@ with tab_analysis:
 
                 st.markdown("---")
                 st.markdown(result)
+
+                # --- Gap Learning Resources ---
+                gaps = _extract_gaps(result)
+                if gaps:
+                    with st.spinner("🔍 Searching for learning resources…"):
+                        gap_resources = _search_gap_resources(gaps)
+
+                    with st.expander(
+                        f"📚 Gap Learning Resources ({len(gaps)} gaps found)",
+                        expanded=True,
+                    ):
+                        search_available = is_search_available()
+                        if not search_available:
+                            st.info(
+                                "💡 **Live search unavailable** — showing curated learning "
+                                "platform links. Install `duckduckgo_search` for real-time results: "
+                                "`pip install duckduckgo_search`"
+                            )
+
+                        for gap_name, resources in gap_resources.items():
+                            st.markdown(f"### 🔴 {gap_name}")
+                            if resources:
+                                for r in resources:
+                                    title = r.get("title", "Resource")
+                                    url = r.get("url", "")
+                                    snippet = r.get("snippet", "")
+                                    st.markdown(
+                                        f"- 🔗 [{title}]({url})  \n  _{snippet[:150]}{'…' if len(snippet) > 150 else ''}_"
+                                    )
+                            else:
+                                st.caption(f"  _No resources found for this topic_")
+                            st.markdown("")
 
             except LLMClientError as e:
                 st.error(f"❌ LLM call failed: {e}")
