@@ -10,7 +10,7 @@ Includes personality presets for feedback style adjustment.
 PERSONALITY_PRESETS = {
     "balanced": {
         "label": "Balanced",
-        "description": "公平客觀，優缺點並重",
+        "description": "Fair and objective, weighs strengths and weaknesses equally",
         "system_modifier": (
             "Provide balanced, fair feedback. Acknowledge both strengths and weaknesses "
             "with equal weight. Be constructive and encouraging while still being honest. "
@@ -19,7 +19,7 @@ PERSONALITY_PRESETS = {
     },
     "strict": {
         "label": "Strict",
-        "description": "嚴格審視，聚焦差距與不足",
+        "description": "Strict and critical, focuses on gaps and weaknesses",
         "system_modifier": (
             "Be strict and critical in your analysis. Focus on gaps, weaknesses, and areas "
             "for improvement. Do not sugarcoat — point out every deficiency and mismatch clearly. "
