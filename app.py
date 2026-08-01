@@ -454,16 +454,37 @@ with tab_analysis:
                 """
             )
 
-    # --- Role selector ---
-    role = st.selectbox(
-        "Select Role",
-        ["Candidate", "HR", "HeadHunter"],
-        format_func=lambda r: {
-            "Candidate": "🧑‍💼 Candidate",
-            "HR": "🏢 HR",
-            "HeadHunter": "🎯 HeadHunter",
-        }[r],
-    )
+    # --- Role + Feedback Style (same row) ---
+    col_role, col_style = st.columns(2)
+    with col_role:
+        role = st.selectbox(
+            "Select Role",
+            ["Candidate", "HR", "HeadHunter"],
+            format_func=lambda r: {
+                "Candidate": "🧑‍💼 Candidate",
+                "HR": "🏢 HR",
+                "HeadHunter": "🎯 HeadHunter",
+            }[r],
+        )
+    with col_style:
+        personality_keys = list(PERSONALITY_PRESETS.keys())
+        current_idx = personality_keys.index(
+            st.session_state.get("personality", DEFAULT_PERSONALITY)
+        ) if st.session_state.get("personality", DEFAULT_PERSONALITY) in personality_keys else 0
+
+        selected_personality = st.selectbox(
+            "Feedback Style",
+            personality_keys,
+            index=current_idx,
+            format_func=lambda k: PERSONALITY_PRESETS[k]["label"],
+            help="Choose the tone and focus of the CV feedback analysis.",
+            key="personality",
+        )
+
+        # Update the custom prompt when personality changes
+        if selected_personality != st.session_state.get("_prev_personality", ""):
+            st.session_state["personality_custom_prompt"] = get_personality_modifier(selected_personality)
+            st.session_state["_prev_personality"] = selected_personality
 
     # HeadHunter extra mode toggle
     hh_mode = None
@@ -478,47 +499,26 @@ with tab_analysis:
             horizontal=True,
         )
 
-    # --- Personality / Feedback Style selector ---
-    st.markdown("---")
-    st.subheader("🎯 Feedback Style")
-
-    personality_keys = list(PERSONALITY_PRESETS.keys())
-    current_idx = personality_keys.index(
-        st.session_state.get("personality", DEFAULT_PERSONALITY)
-    ) if st.session_state.get("personality", DEFAULT_PERSONALITY) in personality_keys else 0
-
-    selected_personality = st.selectbox(
-        "Select feedback personality",
-        personality_keys,
-        index=current_idx,
-        format_func=lambda k: PERSONALITY_PRESETS[k]["label"],
-        help="Choose the tone and focus of the CV feedback analysis.",
-        key="personality",
-    )
-
-    # Update the custom prompt when personality changes
-    if selected_personality != st.session_state.get("_prev_personality", ""):
-        st.session_state["personality_custom_prompt"] = get_personality_modifier(selected_personality)
-        st.session_state["_prev_personality"] = selected_personality
-
+    # --- Feedback Style prompt display ---
+    personality_key = st.session_state.get("personality", DEFAULT_PERSONALITY)
     if IS_CLOUD:
         # Cloud mode: show prompt but don't allow editing
-        st.caption(f"**{PERSONALITY_PRESETS[selected_personality]['description']}**")
+        st.caption(f"💡 Feedback Style: **{PERSONALITY_PRESETS[personality_key]['description']}**")
         st.text_area(
             "System prompt modifier (read-only in cloud demo)",
             value=st.session_state.get("personality_custom_prompt", ""),
-            height=120,
+            height=100,
             disabled=True,
             key="personality_prompt_display",
             help="This prompt modifier is appended to the system prompt. Edit it in the local deployment version.",
         )
     else:
         # Local mode: allow full prompt editing
-        st.caption(f"**{PERSONALITY_PRESETS[selected_personality]['description']}**")
+        st.caption(f"💡 Feedback Style: **{PERSONALITY_PRESETS[personality_key]['description']}**")
         st.text_area(
             "System prompt modifier (editable)",
             value=st.session_state.get("personality_custom_prompt", ""),
-            height=120,
+            height=100,
             key="personality_custom_prompt",
             help="Edit this prompt to customize the feedback style. It is appended to the system prompt sent to the LLM.",
         )
